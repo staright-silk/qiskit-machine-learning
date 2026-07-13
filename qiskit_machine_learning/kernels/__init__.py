@@ -45,6 +45,7 @@ Quantum Kernels
    BaseKernel
    FidelityQuantumKernel
    FidelityStatevectorKernel
+   ProjectedQuantumKernel
    TrainableKernel
    TrainableFidelityQuantumKernel
    TrainableFidelityStatevectorKernel
@@ -61,6 +62,7 @@ Submodules
 from .base_kernel import BaseKernel
 from .fidelity_quantum_kernel import FidelityQuantumKernel
 from .fidelity_statevector_kernel import FidelityStatevectorKernel
+from .projected_quantum_kernel import ProjectedQuantumKernel
 from .trainable_kernel import TrainableKernel
 from .trainable_fidelity_quantum_kernel import TrainableFidelityQuantumKernel
 from .trainable_fidelity_statevector_kernel import TrainableFidelityStatevectorKernel
@@ -69,6 +71,7 @@ __all__ = [
     "BaseKernel",
     "FidelityQuantumKernel",
     "FidelityStatevectorKernel",
+    "ProjectedQuantumKernel",
     "TrainableKernel",
     "TrainableFidelityQuantumKernel",
     "TrainableFidelityStatevectorKernel",

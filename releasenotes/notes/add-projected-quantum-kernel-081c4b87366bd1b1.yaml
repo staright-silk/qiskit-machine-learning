@@ -1,0 +1,15 @@
+---
+features:
+  - |
+    Added a new :class:`~qiskit_machine_learning.kernels.ProjectedQuantumKernel` class.
+    Unlike fidelity-based kernels (:class:`~qiskit_machine_learning.kernels.FidelityQuantumKernel`,
+    :class:`~qiskit_machine_learning.kernels.FidelityStatevectorKernel`), which compute the
+    overlap of two full statevectors and are known to concentrate exponentially as the number
+    of qubits grows, :class:`~qiskit_machine_learning.kernels.ProjectedQuantumKernel` projects
+    each encoded state down to a vector of reduced single-qubit Pauli expectation values before
+    applying a classical Gaussian kernel. This construction, introduced by Huang *et al.*
+    (`arXiv:2011.01938 <https://arxiv.org/abs/2011.01938>`_), avoids the exponential
+    concentration of fidelity kernels and admits a provable prediction advantage over classical
+    models on specifically engineered datasets. The new class follows the same
+    :class:`~qiskit.quantum_info.Statevector`-based design and caching strategy as
+    :class:`~qiskit_machine_learning.kernels.FidelityStatevectorKernel`.
