@@ -10,6 +10,8 @@ features:
     applying a classical Gaussian kernel. This construction, introduced by Huang *et al.*
     (`arXiv:2011.01938 <https://arxiv.org/abs/2011.01938>`_), avoids the exponential
     concentration of fidelity kernels and admits a provable prediction advantage over classical
-    models on specifically engineered datasets. The new class follows the same
-    :class:`~qiskit.quantum_info.Statevector`-based design and caching strategy as
-    :class:`~qiskit_machine_learning.kernels.FidelityStatevectorKernel`.
+    models on specifically engineered datasets. The new class is built on the
+    :class:`~qiskit.primitives.BaseEstimatorV2` primitive interface, so it runs unmodified on
+    exact simulation, shot-based simulation, or real quantum hardware by supplying a different
+    ``estimator``, batches all local observables for a data point into a single job, and caches
+    evaluated projections to avoid resubmitting repeated points.

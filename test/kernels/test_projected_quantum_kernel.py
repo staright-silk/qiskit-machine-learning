@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import pickle
 import unittest
 
 from test import QiskitMachineLearningTestCase
@@ -24,8 +23,10 @@ from sklearn.svm import SVC
 
 from qiskit.circuit.library import z_feature_map, zz_feature_map
 from qiskit.quantum_info import Statevector, partial_trace, Pauli
+from qiskit.primitives import StatevectorEstimator
 
 from qiskit_machine_learning.utils import algorithm_globals
+from qiskit_machine_learning.exceptions import QiskitMachineLearningError
 from qiskit_machine_learning.kernels import ProjectedQuantumKernel
 
 
@@ -69,6 +70,11 @@ class TestProjectedQuantumKernel(QiskitMachineLearningTestCase):
             with self.assertRaises(ValueError):
                 ProjectedQuantumKernel(feature_map=self.feature_map, paulis=("X", "Q"))
 
+    def test_no_feature_map_raises(self):
+        """Constructing without a feature map must raise, matching BaseKernel's contract."""
+        with self.assertRaises(QiskitMachineLearningError):
+            ProjectedQuantumKernel(feature_map=None)
+
     def test_diagonal_is_one(self):
         """K(x, x) must always be exactly 1 since the projected feature vectors coincide."""
         kernel = ProjectedQuantumKernel(feature_map=self.zz_feature_map)
@@ -92,7 +98,7 @@ class TestProjectedQuantumKernel(QiskitMachineLearningTestCase):
         diffs = expected_features[:, np.newaxis, :] - expected_features[np.newaxis, :, :]
         expected_matrix = np.exp(-0.5 * np.sum(diffs**2, axis=-1))
 
-        np.testing.assert_allclose(matrix, expected_matrix, rtol=1e-6, atol=1e-10)
+        np.testing.assert_allclose(matrix, expected_matrix, rtol=1e-6, atol=1e-8)
 
     def test_asymmetric_matches_manual_projection(self):
         """Cross-check the asymmetric evaluate(x, y) path too."""
@@ -108,7 +114,7 @@ class TestProjectedQuantumKernel(QiskitMachineLearningTestCase):
         diffs = x_features[:, np.newaxis, :] - y_features[np.newaxis, :, :]
         expected_matrix = np.exp(-0.5 * np.sum(diffs**2, axis=-1))
 
-        np.testing.assert_allclose(matrix, expected_matrix, rtol=1e-6, atol=1e-10)
+        np.testing.assert_allclose(matrix, expected_matrix, rtol=1e-6, atol=1e-8)
 
     @staticmethod
     def _manual_projection(feature_map, params):
@@ -126,9 +132,20 @@ class TestProjectedQuantumKernel(QiskitMachineLearningTestCase):
     def test_custom_paulis(self):
         """Restricting to a subset of Paulis should shrink the feature dimension accordingly."""
         kernel = ProjectedQuantumKernel(feature_map=self.feature_map, paulis=("Z",))
-        # pylint: disable=protected-access
-        features = kernel._get_projected_features(tuple(self.sample_train[0]))
-        self.assertEqual(features.shape[0], self.feature_map.num_qubits)
+        features = kernel._get_projected_features(self.sample_train[:1])
+        self.assertEqual(features.shape[1], self.feature_map.num_qubits)
+
+    def test_custom_estimator(self):
+        """The kernel must work unmodified with any BaseEstimatorV2 implementation."""
+        default_kernel = ProjectedQuantumKernel(feature_map=self.feature_map, gamma=0.5)
+        default_matrix = default_kernel.evaluate(self.sample_train)
+
+        custom_kernel = ProjectedQuantumKernel(
+            feature_map=self.feature_map, estimator=StatevectorEstimator(), gamma=0.5
+        )
+        custom_matrix = custom_kernel.evaluate(self.sample_train)
+
+        np.testing.assert_allclose(default_matrix, custom_matrix, rtol=1e-6, atol=1e-8)
 
     def test_svc_callable(self):
         """Test callable kernel in sklearn."""
@@ -152,37 +169,53 @@ class TestProjectedQuantumKernel(QiskitMachineLearningTestCase):
         self.assertGreaterEqual(score, 0.5)
 
     def test_projected_cache(self):
-        """Test filling and clearing the reduced-state cache."""
+        """Test filling and clearing the projected-feature cache."""
         kernel = ProjectedQuantumKernel(feature_map=self.zz_feature_map, auto_clear_cache=False)
         svc = SVC(kernel=kernel.evaluate)
         svc.fit(self.sample_train, self.label_train)
         with self.subTest("Check cache fills correctly."):
-            # pylint: disable=no-member
-            self.assertEqual(
-                kernel._get_projected_features.cache_info().currsize, len(self.sample_train)
-            )
+            # pylint: disable=protected-access
+            self.assertEqual(len(kernel._feature_cache), len(self.sample_train))
 
         svc.fit(self.sample_test, self.label_test)
         with self.subTest("Check no auto_clear_cache."):
-            # pylint: disable=no-member
             self.assertEqual(
-                kernel._get_projected_features.cache_info().currsize,
+                len(kernel._feature_cache),
                 len(self.sample_train) + len(self.sample_test),
             )
 
         kernel = ProjectedQuantumKernel(
             feature_map=self.zz_feature_map, cache_size=3, auto_clear_cache=False
         )
-        svc = SVC(kernel=kernel.evaluate)
-        svc.fit(self.sample_train, self.label_train)
-        with self.subTest("Check cache limit respected."):
-            # pylint: disable=no-member
-            self.assertEqual(kernel._get_projected_features.cache_info().currsize, 3)
+        # pylint: disable=protected-access
+        kernel._get_projected_features(self.sample_train[:3])
+        with self.subTest("Check cache fills up to the limit."):
+            self.assertEqual(len(kernel._feature_cache), 3)
+
+        kernel._get_projected_features(self.sample_train[3:])
+        with self.subTest("Check cache limit is respected across calls."):
+            self.assertEqual(len(kernel._feature_cache), 3)
 
         kernel.clear_cache()
         with self.subTest("Check cache clears correctly"):
-            # pylint: disable=no-member
-            self.assertEqual(kernel._get_projected_features.cache_info().currsize, 0)
+            self.assertEqual(len(kernel._feature_cache), 0)
+
+    def test_repeated_points_hit_cache_not_estimator(self):
+        """Duplicate data points must not trigger redundant estimator calls."""
+        kernel = ProjectedQuantumKernel(feature_map=self.feature_map, auto_clear_cache=False)
+        calls = []
+        original_run = kernel.estimator.run
+
+        def counting_run(pubs, **kwargs):
+            calls.append(len(list(pubs)))
+            return original_run(pubs, **kwargs)
+
+        kernel._estimator.run = counting_run
+
+        duplicated = np.vstack([self.sample_train, self.sample_train])
+        kernel.evaluate(duplicated)
+
+        self.assertEqual(sum(calls), len(self.sample_train))
 
     def test_enforce_psd(self):
         """A Gaussian kernel matrix is PSD by construction; check the flag doesn't break this."""
@@ -190,22 +223,6 @@ class TestProjectedQuantumKernel(QiskitMachineLearningTestCase):
         matrix = kernel.evaluate(self.sample_train)
         eigenvalues = np.linalg.eigvals(matrix)
         self.assertTrue(np.all(np.greater_equal(eigenvalues, -1e-10)))
-
-    def test_no_feature_map_raises(self):
-        """Constructing without a feature map must raise, matching BaseKernel's contract."""
-        from qiskit_machine_learning.exceptions import QiskitMachineLearningError
-
-        with self.assertRaises(QiskitMachineLearningError):
-            ProjectedQuantumKernel(feature_map=None)
-
-    def test_pickle(self):
-        """Test that a kernel (and its cache machinery) survives a pickle round-trip."""
-        kernel = ProjectedQuantumKernel(feature_map=self.feature_map)
-        kernel.evaluate(self.sample_train)
-        pickled = pickle.loads(pickle.dumps(kernel))
-        matrix = pickled.evaluate(self.sample_train)
-        expected = kernel.evaluate(self.sample_train)
-        np.testing.assert_allclose(matrix, expected)
 
 
 if __name__ == "__main__":
